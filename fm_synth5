@@ -1,0 +1,582 @@
+// This is the code that goes with my live code youtube video located here:
+// 
+
+// add some memory to make this thing work!
+s.boot;
+s.options.memSize = 2.pow(20);
+
+(
+// create 31 buses for various synthDefs
+// I don't usually use them all, but I like to have them just in case.
+~bus = [];
+31.do{
+	x = Bus.audio(s, 2);
+	~bus = ~bus.add(x);
+};
+)
+
+(
+// create 31 groups iteratively.  Add different synths to groups to keep order of execution tidy.  If you want to know more about order of execution, check out this tutorial: https://www.youtube.com/watch?v=LBSPWr-UYwU&t=1497s  Again, I don't use all of them, but I tend to have them just in case.
+~group = [];
+31.do{
+	x = Group.new;
+	~group = ~group.add(x);
+};
+~num_groups = 30;
+
+// this is the base synthdef on which the others are also built.
+SynthDef.new('live_code94', {
+    var sig, sig2, sig_noise,
+	sig_noise_range_low, sig_noise_range_high,
+	mod, mod2, mul_mod, mul_mod_low, mul_mod_high,
+	env, env_mod1, env_mod2, env2, pan;
+	env = EnvGen.ar(Env.new(
+		[0, 'crest'.ir(1), 0],
+		['atk'.ir(0.01), 'decay'.ir(1)]* 'dur'.ir(1) * 'dur_env'.ir(1)),
+        doneAction:2);
+
+	// I like to create signal noise to emulate a real life situation where frequencies are not perfect.  This slight deviation helps to song to meander around in what I think is a pleasant way.  I create a low range slightly under the fundamental frequency and one slightly above with a bit of crossover.
+	sig_noise_range_low =
+	SinOsc.ar('dust_osc2'.ir(40) * 3)
+	.range(0.998, 1.004);
+
+	sig_noise_range_high =
+	SinOsc.ar('dust_osc2'.ir(40) * 3)
+	.range(1.0, 1.006);
+
+	// this is the actual signal noise with the two ranges above input, multiplied by dust to make it a bit asynchronous.
+	sig_noise =
+	Impulse.kr('dust2_osc'.ir(40))
+	.range(
+		sig_noise_range_low,
+		sig_noise_range_high)
+	*
+	Dust.kr(SinOsc.ar(Pulse.kr(3),Pulse.kr(7))).range(
+		sig_noise_range_low*0.999,
+		sig_noise_range_high*1.0001);
+
+	// working here to create the mul values for the FM synthesis.
+	// for more info on FM synthesis, you can watch the other four videos I've made where I just experiment with FM:
+
+	// video 1: https://www.youtube.com/watch?v=ds19LuhXGyk&t=322s
+	// video 2: https://www.youtube.com/watch?v=bqTHXnoxx7Y&t=19s
+	// video 3: https://www.youtube.com/watch?v=IabpjSvYFmg&t=524s
+	// video 4: https://www.youtube.com/watch?v=X_x6buX2GcE
+
+	// These are mostly just me learning and experimenting and pushing the limits of supercollider to see what is possible with FM.
+
+	// for a straight up tutorial, see here: https://www.youtube.com/watch?v=UoXMUQIqFk4&t=320s
+	// and here: https://www.youtube.com/watch?v=dLMSR2Kjq6Y&t=926s
+	// also here: https://www.youtube.com/watch?v=eeglzRFlbso
+
+	// the low end of the modulator mul value
+	mul_mod_low =
+	Dust.kr('dust3_osc'.ir(2)/'dust2_osc'.ir(40))
+	.range(30, 300).round(30);
+
+	// the high end of the modulator mul value
+	mul_mod_high =
+	Saw.kr('dust2_osc'.ir(40))
+	.range(1000, 9000).round(10);
+
+	// putting the ranges together to create the mul values as controlled by LFPar
+	mul_mod =
+	LFPar.ar('lf_par_osc'.ir(5))
+	.range(
+		mul_mod_low / 'lf_par_osc'.ir(5),
+		mul_mod_high * 'mul_mod_high_rate'.ir(1));
+
+	// input the mul ranges into modulator and a pulse just for kicks
+	mod = LFPar.ar(
+		'freq'.ir(300), iphase:Pulse.kr(3),
+		mul:mul_mod);
+
+	// use the same mul ranges for a second modulatar with a bit of signal noise moving just around the fundamental frequency
+	mod2 = Saw.ar(
+		'freq'.ir(300) * sig_noise / 3,
+		mul:mul_mod * sig_noise);
+
+
+	// create some scaled envelopes so that the modulators are not too crazy using other ugens to control the range of the env
+	env_mod1 = SinOsc.ar(3,30).range(3, 31);
+	env_mod2 = Saw.ar(3).range(3, 12);
+
+	// create a fundamental frquency with two harmonics added on with slightly lower mul values with the first mod added to it scaled by the envelope.
+	sig = SinOsc.ar('freq'.ir(300)*[
+		'fund_harm'.ir(1),
+		'sig_harm2'.ir(2),
+		'sig_harm3'.ir(3)
+	]
+		* sig_noise
+	+ (mod * (env / env_mod2)), mul:1/[
+		'sin_mul1'.ir(1) * sig_noise,
+		'sin_mul2'.ir(5) * sig_noise,
+		'sin_mul3'.ir(9) * sig_noise]
+	* sig_noise);
+
+	// create a second signal also at fundamental, but with the second modulator multiplied by a pulse
+	sig2 = SinOsc.ar('freq'.ir(300)
+		* sig_noise
+		+ (mod2 * env/ env_mod1))
+	* (Pulse.kr('lf_par_osc'.ir(5))
+		* (env * sig_noise));
+
+	// create a pan to shift and blend the two signals over time
+	pan = LFSaw.ar(1/'lf_par_osc'.ir(5))
+	.range(-0.5, 0.15)
+	* Dust.kr('dust_osc3'.ir(2)).range(-0.75, 0.05);
+
+	// send it either direct to speakers or one of the effect synths
+	Out.ar('out'.ir(0),
+		XFade2.ar(sig, sig2, pan)!2
+		* sig_noise * env * 'amp'.ir(0.01));
+}).add;
+
+
+
+
+
+//////////////////////
+// second SynthDef
+//////////////////////
+
+SynthDef.new('live_code94b', {
+    var sig, sig2, mod, mod2, mul_mod, mul_mod_low, mul_mod_high, env, env2, pan, pan_kr1, pan_kr2, pan_kr3,
+	dust_kr1, dust_kr2, dust_kr3, dust_kr4;
+
+	env = EnvGen.ar(Env.new(
+		[0, 'crest'.ir(1), 0],
+		['atk'.ir(0.01), 'decay'.ir(1)]
+		* 'dur'.ir(1) * 'dur_env'.ir(1)),
+        doneAction:2);
+
+	env2 = EnvGen.ar(Env.sine(
+		'dur'.ir(1)
+		* 'dur_env2'.ir(0.7)));
+
+	sig = Saw.ar('freq'.ir(300)) *
+	Dust.kr('dust_osc'.ir(3) * env2);
+
+	sig2 = LFSaw.ar('freq'.ir(300) *
+		'saw_ratio'.ir(0.998));
+
+	pan_kr1 = SinOsc.kr(3,30).range(-0.5, -0.1);
+	pan_kr2 = SinOsc.kr(3,30).range(0.1, 0.6);
+	pan_kr3 = Saw.kr(3,30).range(pan_kr1, pan_kr2);
+	dust_kr1 = Dust.kr(10).range(0.9, 1);
+	dust_kr2 = Dust.kr(10).range(1, 1.1);
+	dust_kr3 = Dust.kr(10).range(1, 20);
+	dust_kr4 = Dust.kr(31).range(2.5, 3.5);
+
+	pan = SinOsc.ar(1/'lf_par_osc'.ir(5))
+	.range(pan_kr1, pan_kr2) * pan_kr3;
+	Out.ar('out'.ir(0),
+		DFM1.ar(XFade2.ar(sig, sig2, pan),
+			'freq'.ir(300),
+			Dust.kr(dust_kr3).range(dust_kr1, dust_kr2))!2
+		* env * 'amp'.ir(0.01) / dust_kr4);
+}).add;
+
+
+
+
+//////////////////////
+// 3rd SynthDef
+//////////////////////
+
+SynthDef.new('live_code94c', {
+    var sig, sig2, mod, mod2,
+	mul_mod, mul_mod_low, mul_mod_high,
+	env, env2, rand1, rand2, rand3, rand4, rand5,
+	rand2_low, rand2_high,
+	pan, pan_rate;
+	env = EnvGen.ar(Env.new(
+		[0, 'crest'.ir(1), 0],
+		['atk'.ir(0.01), 'decay'.ir(1)]
+		* 'dur'.ir(1) * 'dur_env'.ir(1)),
+        doneAction:2);
+
+	rand1 = TRand.kr(0.5, 1, Hasher.ar(Saw.ar(300).range(-1, 1)));
+	rand2 = TRand.kr(1, 100, Hasher.ar(Saw.ar(300).range(-1, 1)));
+	rand3 = TRand.kr(1, 2.0, Hasher.ar(Saw.ar(300).range(-1, 1)));
+	rand4 = TRand.kr(-0.5, -0.1,
+		GrayNoise.ar(Saw.ar(300).range(-1, 1)));
+	rand5 = TRand.kr(0.5, 0.15,
+		GrayNoise.ar(Saw.ar(300).range(-1, 1)));
+	rand2_low = LFDClipNoise.ar(rand2).range(0.01, 0.06);
+	rand2_high = LFDClipNoise.ar(rand2).range(0.5, 0.8);
+	mul_mod_low = TRand.kr(30, 300,
+		Hasher.ar(SinOsc.ar(3)).range(-0.1, 0.1));
+	pan_rate = Saw.kr(4).range(-0.75, 0.05);
+
+	mul_mod_high = Dust.kr(4).range(3000, 6000)
+	.round(300);
+
+	mul_mod = LFPar.ar(
+		'lf_par_osc'.ir(5))
+	.range(mul_mod_low, mul_mod_high);
+
+	mod = LFSaw.ar('freq'.ir(300), mul:mul_mod);
+	mod2 = Saw.ar('freq'.ir(300) * 3, mul:mul_mod);
+
+	sig = SinOscFB.ar('freq'.ir(300) + mod,
+		SinOsc.ar('saw_ratio'.ir(0.998)
+			* 'dur_env'.ir(1))
+		.range(rand2_low, rand2_high)
+		* rand1);
+
+	sig2 = SinOscFB.ar('freq'.ir(300)
+		* 'saw_ratio'.ir(0.998) + mod2,
+		SinOsc.ar('saw_ratio'.ir(0.998)
+			* 'lf_par_osc'.ir(5)).range(
+			rand2_low/2,
+			rand2_high*rand2_high)
+		* rand1/(rand1 + rand1 + rand3));
+
+	pan = SinOsc.ar(
+		1/'lf_par_osc'.ir(5)).range(rand4, rand5)
+	* pan_rate;
+
+	Out.ar('out'.ir(0),
+		DFM1.ar(XFade2.ar(sig, sig2, pan * rand1),
+			'freq'.ir(300),
+			Dust.kr(10).range(0.9, 1.1))!2
+		* env * 'amp'.ir(0.01)/ (rand1 * 6));
+}).add;
+
+
+
+
+//////////////////////
+// 4th SynthDef
+//////////////////////
+
+SynthDef.new('live_code94d', {
+    var sig, sig2, sig3,
+	reset1, reset1_low, reset1_high,
+	reset1_kr, reset1_kr2,
+	reset2_num,
+	env, env2, pan, pan_movement, noise_movement;
+	env = EnvGen.ar(Env.new(
+		[0, 'crest'.ir(1), 0],
+		['atk'.ir(0.01), 'decay'.ir(1)]
+		* 'dur'.ir(1) * 'dur_env'.ir(1) 
+		* 'dur_env_code94d'.ir(0.8)),
+        doneAction:2);
+	noise_movement = DPW3Tri.ar(30).range(0.5, 1);
+	pan_movement = DPW3Tri.ar(30).range(0.5, 2.5);
+	
+	reset1_kr = Saw.ar(5).range(1, 1000);
+	reset1_kr2 = Saw.ar(5).range(1, 1000);
+
+	reset1_low = LFNoise1.ar(reset1_kr)
+	.range(-0.1, -0.4);
+	reset1_high = LFNoise2.ar(reset1_kr2)
+	.range(0.1, 0.4);
+
+	reset2_num = WhiteNoise.ar(reset1_kr)
+	.range(4, 8);
+
+	reset1 = SetResetFF.ar(
+		Dust.ar('freq'.ir(300)
+			/ 'octave'.ir(1) * noise_movement)
+		.range(reset1_low, reset1_high),
+		Dust.ar(reset2_num));
+
+	sig = BPF.ar(WhiteNoise.ar(10 / 'wn'.ir(1))
+		* reset1, 'freq'.ir(300), 0.1
+		* noise_movement);
+
+	sig2 = BPF.ar(PinkNoise.ar(10 / 'pn'.ir(1))
+		* reset1
+		* 'octave'.ir(1) * SinOsc.ar(30).range(3,5),
+		'freq'.ir(300),
+		0.5 * noise_movement);
+
+	sig3 = SinOsc.ar('freq'.ir(300)
+		+ (sig + sig2 * env /
+			VarSaw.ar(20).range(4,23)));
+
+	pan = Dust.kr(reset1_kr2).range(
+		reset1_low*pan_movement, 
+		reset1_high*pan_movement);
+	Out.ar('out'.ir(0),
+		DFM1.ar(XFade2.ar(sig,
+			XFade2.ar(sig2, sig3, pan),
+			pan), 'freq'.ir(300),
+		Dust.kr(reset1_kr2/'freq'.ir(300))
+		.range(0.7, 1.3))!2
+		* env * 'amp'.ir(0.01)/3);
+}).add;
+
+ SynthDef.new('live_code94e', {
+    var sine_kr, sig, sig2, sig3,
+	reset1, reset1_low, reset1_high,
+	reset1_kr, reset1_kr2,
+	reset2_num,
+	env, env2, pan, pan_kr_low, pan_kr_high,
+	noise_movement,
+	noise_move_low, noise_move_high;
+	env = EnvGen.ar(Env.new(
+		[0, 'crest'.ir(1), 0],
+		['atk'.ir(0.01), 'decay'.ir(1)]
+		* 'dur'.ir(1) * 'dur_env'.ir(1) *
+		'dur_live_code94e'.ir(1)),
+        doneAction:2);
+
+	sine_kr = 'sine_kr'.ir(1);
+
+	noise_move_low = LFNoise2.ar(
+		'noise_move1'.ir(15))
+	.range(0.01, 0.5);
+
+	noise_move_high = LFNoise2.ar(
+		'noise_move2'.ir(15))
+	.range(0.5, 1);
+
+	noise_movement =
+	DPW3Tri.ar('dpw'.ir(30))
+	.range(noise_move_low, noise_move_high);
+
+	reset1_kr = Saw.ar(15).range(1, 500);
+	reset1_kr2 = Saw.ar(25).range(1, 500);
+
+	reset1_low = LFNoise1.ar(reset1_kr)
+	.range(-0.1, -0.9);
+	reset1_high = LFNoise2.ar(reset1_kr2)
+	.range(0.1, 0.9);
+
+	reset2_num = WhiteNoise.ar(reset1_kr)
+	.range(4, 8);
+
+	reset1 = SetResetFF.ar(
+		Dust.ar('freq'.ir(300)
+			/ 'octave'.ir(1))
+		.range(reset1_low, reset1_high),
+		Dust.ar(reset2_num));
+
+	sig = BPF.ar(BrownNoise.ar(
+		'wn2'.ir(10) / 'wn'.ir(1))
+		* reset1, 'freq'.ir(300), 0.1
+		* noise_movement);
+
+	sig2 = BPF.ar(ClipNoise.ar(
+		'cn2'.ir(10) / 'cn'.ir(1))
+		* reset1
+		* 'octave'.ir(1) * SinOsc.ar(sine_kr).range(3,5),
+		'freq'.ir(300),
+		0.5 * noise_movement);
+
+	sig3 = SinOsc.ar('freq'.ir(300)
+		+ (sig + sig2 * env /
+			VarSaw.ar(20).range(4,23)));
+
+	pan_kr_low = SinOsc.ar(sine_kr / 2).range(-1, -0.01);
+	pan_kr_high = SinOsc.ar(sine_kr * 3).range(1, 0.01);
+
+	pan = Dust.kr(reset1_kr2)
+	.range(pan_kr_low, pan_kr_high);
+	Out.ar('out'.ir(0),
+		DFM1.ar(XFade2.ar(sig,
+			XFade2.ar(sig2, sig3, pan),
+			pan), 'freq'.ir(300),
+		Dust.kr(reset1_kr2/'freq'.ir(300))
+		.range(0.7, 1.3))!2
+		* env * 'amp'.ir(0.01)/3);
+}).add;
+
+
+
+
+SynthDef.new('grey_chain1', {
+	var sig, env, reset1;
+	sig = In.ar('in'.ir(0), 2);
+	reset1 = SetResetFF.ar(
+		Dust.ar('dust_osc'.ir(20))
+		.range(-0.1, 0.1), Dust.ar(4));
+
+	sig = sig * Pulse.kr('pulse_osc'.ir(3)) * reset1;
+	Out.ar('out'.ir(0), sig);
+}).add;
+
+SynthDef.new('grey_chain2', {
+	var sig, env, reset1;
+	sig = In.ar('in'.ir(0), 2);
+	reset1 = SetResetFF.ar(Dust.ar('dust_osc'.ir(20)).range(-0.1, 0.1), Dust.ar(4));
+	sig = sig * Pulse.kr('pulse_osc'.ir(3)) * reset1;
+	sig = RLPF.ar(sig, rq:'rq1'.ir(0.5));
+	Out.ar('out'.ir(0), sig);
+}).add;
+
+SynthDef.new('grey_chain3', {
+	var sig, env, reset1;
+	sig = In.ar('in'.ir(0), 2);
+	sig = sig * Trig.kr(SinOsc.ar(3), 0.1);
+	sig = Greyhole.ar(sig, 2, 0.5);
+	Out.ar('out'.ir(0), sig);
+}).add;
+
+~live_code94_pdef = [];
+20.do{arg i;
+	~live_code94_pdef = ~live_code94_pdef.add(
+        Pdef("live_code94_pdef%".format(i).asSymbol,
+		    Pchain(
+                Pbind(
+                    'instrument', Prand([
+						'live_code94',
+						'live_code94b',
+						'live_code94c',
+						'live_code94d',
+						'live_code94e',
+					], inf),
+					'group', ~group[~num_groups],
+					'out', Prand([0, ~bus[i]], inf),
+					'amp', Pwhite(0.01, 0.75, inf)
+					* Pkey('octave').expexp(
+						3, 7, 1,
+						Pwhite(0.1, 0.5), -90),
+					'sin_mul2', Pwhite(5, 15),
+					'sin_mul3', Pwhite(15, 55),
+					'mul_mod_high_rate',
+					Pwhite(0.25, 3).round(0.125),
+					'crest', Pwhite(0.7, 1),
+					'dur', Prand([4, 1, Pwhite(3, 7.0)], inf) * (i+Pwhite(1,4))/(i+Pwhite(1,4)),
+					'dur_env', Prand([
+						Pexprand(1.1, 1.4, 1),
+						Pexprand(0.1, 0.4, 1),
+						Pexprand(0.5, 1.4, 1),
+						Pexprand(2.0, 2.4, 1),
+					], inf) * Pkey('octave').expexp(3, 7, 1, 0.1),
+
+					'atk', Prand([
+						Pwhite(0.01, 0.03) * (i+1),
+						Pwhite(0.01, 0.07) * (i+0.5),
+						Pwhite(0.1, 1),
+					], inf),
+
+
+					'decay', Prand([
+						(Pwhite(1.5, 2) - Pkey('atk')).abs,
+						(Pwhite(0.5, 3) - Pkey('atk')).abs,
+						(Pwhite(0.5, 0.7) - Pkey('atk')).abs,
+					], inf),
+
+					'octave', Pwrand([3, 4, 5, 6, 7],
+						[50, 50, 80, 20, 10].normalizeSum, inf),
+					'note', Prand([
+						Prand(Scale.minor.degrees, 10),
+						Pseq([0], 10),
+						Pseq([3], 10),
+						Pseq([8, 10, 12, 14], 10),
+					], inf),
+					'fund_harm', Pwhite(0.998, 1.002),
+
+					'sig_harm2', Pkey('fund_harm') *
+					Pwhite(1, 3),
+					'sig_harm3', Pkey('sig_harm2') *
+					Pwhite(1, 2),
+					'lf_par_osc', 1/Pkey('octave')*4,
+					'dust2_osc',
+					Pkey('lf_par_osc')
+					* Prand([
+						Pwhite(1, 4),
+						1/Pwhite(1, 4),
+					], inf),
+					'dust3_osc',
+					Pkey('dust2_osc')/Pwhite(20,40),
+					'saw_ratio', Pwhite(0.996, 1.002),
+					'fb_low', Pwhite(0.1, 0.9),
+					'fb_high', Pwhite(0.1, 0.9),
+					'wn', Pwhite(1, 30.0),
+					'pn', Pwhite(1, 70.0),
+					'cn', Pwhite(10, 15.0),
+					'wn2', Pwhite(10, 15.0),
+					'cn2', Pwhite(10, 15.0),
+					'dpw', Pwhite(1, 300),
+					'noise_move1', Pkey('dpw')/10,
+					'noise_move2', Pkey('dpw')/
+					Pwhite(30, 70),
+					'dur_env_code94d', Pwhite(0.8, 1.2),
+					'dur_live_code94e', Pwhite(0.5, 1),
+				);
+			);
+		);
+	);
+};
+
+~live_code94_player = [];
+4.do{
+	6.do{arg i;
+		~live_code94_player = ~live_code94_player.add(
+			~live_code94_pdef[i];
+		);
+	};
+};
+)
+
+(
+2.do{arg i;
+	x = Synth.new('grey_chain1', [
+	'in', ~bus[i],
+		'dt', Pwhite(0.1, 0.5),
+		'damp', Pwhite(0.01, 1),
+		's', Pwhite(0.9, 1),
+		'diff', Pwhite(0.01, 0.3),
+		'pulse_osc', Pwhite(3, 8).round(0.25),
+		'dust_osc', Pseq([Pseg([1, 20, 1], Pwhite(1, 40))], inf),
+	],
+	~group[~num_groups-i], addAction:'addToTail');
+
+	y = Synth.new('grey_chain2', [
+	'in', ~bus[i+2],
+		'dt', Pwhite(0.1, 0.5),
+		'damp', Pwhite(0.01, 1),
+		's', Pwhite(0.9, 1),
+		'diff', Pwhite(0.01, 0.3),
+		'pulse_osc', Pwhite(3, 8).round(0.25),
+		'dust_osc', Pseq([Pseg([1, 20, 1], Pwhite(1, 40))], inf),
+	],
+	~group[~num_groups-i-1], addAction:'addToTail');
+
+	z = Synth.new('grey_chain3', [
+		'in', ~bus[i+4],
+		'note', Prand(Scale.minor, inf),
+		'octave', Pwhite(3, 6),
+	],
+	~group[~num_groups-i-2], addAction:'addToTail');
+};
+)
+
+~r1 = Recorder(s);
+~r1.recHeaderFormat("wav");
+~r1.prepareForRecord("/Volumes/FAMILY PIC BACKUP/SuperCollider Recordings/live_code_94_V7.wav", 2);
+(
+r = Routine{
+	50.do{arg j;
+		loop{
+			2.do{arg i;
+				y = rrand(20, 40.0);
+				y.postln;
+				~group[~num_groups-i].set(
+					'pulse_osc', (i+y),
+					'dust_osc', Pseq([Pseg([1, Pwhite(1, 40), 1], Pwhite(1, 40))], inf),
+				);
+				~group[~num_groups-i-1].set(
+					'pulse_osc', (i+y),
+					'dust_osc', Pseq([Pseg([1, Pwhite(1, 40), 1], Pwhite(1, 40))], inf),
+					'rq1', Pwhite(0.1, 0.5),
+				);
+				~group[~num_groups-i-2].set(
+					'note', Prand(Scale.minor, inf),
+					'octave', Pwhite(3, 6),
+				);
+			};
+			rrand(1, 15).wait;
+		};
+	};
+}.play;
+
+PfadeIn(Ppar(~live_code94_player, 1), 50).play;
+~r1.record;
+)
+
