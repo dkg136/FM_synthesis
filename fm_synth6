@@ -1,0 +1,233 @@
+
+
+(
+~bus = [];
+31.do{
+	x = Bus.audio(s, 2);
+	~bus = ~bus.add(x);
+};
+)
+
+(
+~group = [];
+31.do{
+	x = Group.new;
+	~group = ~group.add(x);
+};
+~num_groups = 30;
+
+SynthDef.new('fm_synth90', {
+    var sig, sig2, sig3, env, env2, 
+	mod1, mod_mul1, amp_noise, pulse_rate1, 
+	pulse_kr1, pulse_kr1_low, pulse_kr1_high, 
+	pulse_kr2, pulse_kr2_low, pulse_kr2_high,
+	pulse_kr3, pulse_kr3_low, pulse_kr3_high,
+	pan, pan_kr1, pan_kr2, output, phase = 0;
+	env = EnvGen.ar(Env.new(
+		[0, 'crest'.ir(1), 0],
+		['atk'.ir(0.01), 'decay'.ir(1)]* 'dur'.ir(1) * 'dur_env'.ir(1)),
+        doneAction:2);
+	mod_mul1 = 0;
+	33.do{arg i, temp, in, in_low_range, in_high_range;
+		in_low_range = LFNoise1.ar(30)
+		.range('sin_osc2'.ir(0.3), 'sin_osc2'.ir(0.3)*2);
+		in_high_range = LFNoise1.ar(3)
+		.range('sin_osc3'.ir(0.3), 'sin_osc3'.ir(0.3)*2);
+		in = SinOsc.ar(
+			SinOsc.ar('sin_osc1'.ir(0.03))
+			.range(
+				in_low_range, 
+				in_high_range))
+		.range('sin_osc4'.ir(1), 'sin_osc5'.ir(3000));
+		
+		temp = DelayN.ar(in, 
+			maxdelaytime: (i*{rrand(0.002, 0.004)}),
+			delaytime: (i * {rrand(0.002, 0.03)}),
+		);
+		mod_mul1 = temp + mod_mul1
+	};
+	mod1 = SinOsc.ar('freq'.ir(300), mul:mod_mul1);
+	sig = SinOsc.ar(
+		'freq'.ir(300) + (mod1 * env / SinOsc.ar('sin_osc6'.ir(0.3), phase:phase)
+			.range('sin_osc7'.ir(1), 'sin_osc8'.ir(100)))) * ('gate1'.ir(0));
+	sig2 = BPF.ar(SinOsc.ar('freq'.ir(300) + (mod1 * env / SinOsc.ar('sin_osc6'.ir(0.3))
+		.range('sin_osc7'.ir(1), 'sin_osc8'.ir(100)))), 'freq'.ir(300), 0.1);
+	
+	// pulse args
+	pulse_kr1_low = Saw.ar(10)
+	.range('pulse_osc4'.ir(1), 'pulse_osc4'.ir(1)*2);
+	pulse_kr1_high = Saw.ar(10)
+	.range('pulse_osc5'.ir(1), 'pulse_osc5'.ir(1)*2);
+	pulse_kr1 = SinOsc.ar(
+		'pulse_osc3'.ir(1)).range(
+		pulse_kr1_low, pulse_kr1_high);
+	
+	pulse_kr2_low = LFSaw.ar(5)
+	.range('pulse_osc7'.ir(1), 'pulse_osc7'.ir(1)/2);
+	pulse_kr2_high = LFSaw.ar(5)
+	.range('pulse_osc8'.ir(1), 'pulse_osc8'.ir(1)/2);
+	pulse_kr2 = SinOsc.ar(
+		'pulse_osc6'.ir(1))
+	.range(pulse_kr2_low, pulse_kr2_high);
+	
+	pulse_kr3_low = SinOsc.ar(5)
+	.range('pulse_osc9'.ir(1), 'pulse_osc9'.ir(1)/2);
+	pulse_kr3_high = SinOsc.ar(5)
+	.range('pulse_osc10'.ir(1), 'pulse_osc10'.ir(1));
+	pulse_kr3 =
+	SinOsc.ar('pulse_osc11'.ir(1))
+	.range(pulse_kr3_low, pulse_kr3_high);
+	
+	pulse_rate1 = Pulse.kr(pulse_kr1, Pulse.kr(10).range('pulse_width1'.ir(0.01), 'pulse_width2'.ir(0.01)), 
+			mul:Pulse.kr('pulse_osc2'.ir(10)).range(pulse_kr2, pulse_kr3));
+	sig3 = SinOsc.ar(
+		'freq'.ir(300) + (mod1 * env / SinOsc.ar('sin_osc6'.ir(0.3), phase:phase)
+			.range('sin_osc7'.ir(1), 'sin_osc8'.ir(100)))) * ('gate2'.ir(0) 
+		* pulse_rate1);
+	
+	
+	amp_noise = SinOsc.ar('sin_osc9'.ir(10)).range('sin_osc10'.ir(0.5), 'sin_osc11'.ir(1));
+	pan_kr1 = LFNoise1.ar(20).range(-0.9, -0.5);
+	pan_kr2 = LFNoise1.ar(20).range(0.2, 0.5);
+	pan = LFNoise1.ar('sin_osc8'.ir(100)).range(pan_kr1, pan_kr2);
+	output = XFade2.ar(XFade2.ar(sig, sig3, pan), sig2, pan)!2;
+	Out.ar('out'.ir(0), LeakDC.ar(output) * env * ('amp'.ir(0.01) * amp_noise));
+}).add;
+
+SynthDef.new('grey_chain1', {
+	var sig, env;
+	sig = In.ar('in'.ir(0), 2);
+	sig = Greyhole.ar(sig, 'dt'.ir(0.1));
+	Out.ar('out'.ir(0), sig);
+}).add;
+
+~fm_synth90_pdef = [];
+20.do{arg i;
+	~fm_synth90_pdef = ~fm_synth90_pdef.add(
+        Pdef("fm_synth90_pdef%".format(i).asSymbol,
+		    Pchain(
+                Pbind(
+                    'instrument', 'fm_synth90',
+					'gate1', Pwrand([0, 1], [70, 30].normalizeSum, inf),
+					'gate2', Pwrand([0, 1], [40, 60].normalizeSum, inf),
+					'group', ~group[~num_groups],
+					'out', Pwrand([0, ~bus[i]], [30, 70].normalizeSum, inf),
+					'amp', Pwhite(0.01, 0.3, inf),
+					'crest', Pwhite(0.7, 1),
+					'dur', Prand([
+						Prand([8, Pwhite(3, 20.0), 1, 1/2, 1/4], 100)
+					* Pwhite(i+Pwhite(1,4.0).round(0.25))/Pwhite(i+Pwhite(3, 7).round(0.125)),
+						Pseq([1], 100) * Pwhite(1, 4.0).round(0.25),
+					], inf),
+					'dur_env', Prand([
+						Pexprand(1.1, 1.4, 1),
+						Pexprand(0.1, 0.4, 1),
+						Pexprand(0.5, 1.4, 1),
+						Pexprand(2.0, 4, 1),
+					], inf) * Pkey('octave').expexp(3, 7, 1, 0.1),
+					'octave', Prand([3, 4, 5, 6, 7], inf),
+					'phase', Pwhite(pi, 1.1pi),
+					'note', Prand(Scale.minor.degrees, inf),
+					
+					// sine ratios
+					'ratio1', Pwhite(1, Pwhite(50, 100).round(10)) * Pwhite(0.25, 3).round(0.125),
+					'ratio2', Pwhite(1, 10) / Pwhite(1, 2.0).round(0.125),
+					'ratio3', Pwhite(3, 5).round(0.25),
+					'ratio4', Pwhite(7, 28).round(7),
+					'ratio5', Pwhite(28, 28 * Pkey('ratio3')).round(7),
+					'ratio6', Pkey('ratio5')/Pwhite(1, 4.0).round(0.0625),
+					'sin_osc1', Pwhite(0.03, 0.03 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc2', Pwhite(0.3, 0.3 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc3', Pwhite(3, 3 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc4', Pwhite(1, 1 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc5', Pwhite(300, 3000 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc6', Pwhite(0.03, 0.03 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc7', Pwhite(1, 1 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc8', Pwhite(100, 100 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc9', Pwhite(10, 10 * Prand([
+						Pkey('ratio1'), Pkey('ratio2'), 
+						Pkey('ratio3'), Pkey('ratio4'), Pkey('ratio5'), Pkey('ratio6')  
+					], inf),
+					),
+					'sin_osc10', Pwhite(0.5, 1),
+					'sin_osc11', Pwhite(0.5, 1),
+					
+					// pulse ratios
+					'pulse_ratio_global', Pwhite(1, 9.0).round(0.25),
+					'pulse_osc', Pwhite(10, 100).round(5) * Pkey('pulse_ratio_global'),
+					'pulse_osc2', Pwhite(1, 20.0).round(0.5) * Pkey('pulse_ratio_global'),
+					'pulse_osc3', Pwhite(1, 30.0).round(0.5) * Pkey('pulse_ratio_global'),
+					'pulse_osc4', Pwhite(1, 2.0).round(0.5) * Pkey('pulse_ratio_global'),
+					'pulse_osc5', Pwhite(1, 10.0).round(0.5) * Pkey('pulse_ratio_global'),
+					'pulse_osc6', Pwhite(1, 5.0).round(0.5) * Pkey('pulse_ratio_global'),
+					'pulse_osc7', Pwhite(0.1, 1.0).round(0.1),
+					'pulse_osc8', Pwhite(0.1, 1.0).round(0.01),
+					'pulse_osc9', Pwhite(1, 2.0).round(0.5) * Pkey('pulse_ratio_global'),
+					'pulse_osc10', Pwhite(0.9, 1.0).round(0.1), 
+					'pulse_osc11', Pwhite(0.7, 1.0).round(0.01), 
+					'pulse_width1', Pwhite(0.01, 0.1).round(0.01) * Pwhite(1, 5.0).round(0.25),
+					'pulse_width2', Pwhite(0.05, 0.1).round(0.05) * Pwhite(1, 2.0).round(0.25),
+				);
+			);
+		);
+	);
+};
+
+~fm_synth90_player = [];
+4.do{
+	5.do{arg i;
+		~fm_synth90_player = ~fm_synth90_player.add(
+			~fm_synth90_pdef[i];
+		);
+	};
+};
+)
+
+(
+5.do{arg i;
+Synth.new('grey_chain1', [
+	'in', ~bus[i],
+		'dt', Pwhite(0.1, 0.3) * (i+1),
+		'damp', Pwhite(0.01, 1),
+		's', Pwhite(0.9, 1),
+		'diff', Pwhite(0.01, 0.3),
+	],
+	~group[~num_groups-i], addAction:'addToTail');
+};
+)
+
+(
+PfadeIn(Ppar(~fm_synth90_player, 1), 200).play;
+)
